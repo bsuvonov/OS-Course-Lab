@@ -280,7 +280,7 @@ _docker_run() {
             -v ${LABROOT}:${LABROOT} -w $(pwd) \
             --security-opt=seccomp:unconfined \
             --platform=linux/amd64 \
-            ipads/oslab:24.09 \
+            ipads/oslab:25.03 \
             $self $@
     fi
 }
