@@ -140,7 +140,8 @@ static void early_uart_send(unsigned int c)
 void uart_send_string(char *str)
 {
         /* LAB 1 TODO 3 BEGIN */
-        /* BLANK BEGIN */
-        /* BLANK END */
+  for (; *str; ++str) {
+    early_uart_send((unsigned int) *str);
+  }
         /* LAB 1 TODO 3 END */
 }
