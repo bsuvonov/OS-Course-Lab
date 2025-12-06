@@ -189,6 +189,9 @@ int handle_trans_fault(struct vmspace *vmspace, vaddr_t fault_addr)
         /* Get the offset in the pmo for faulting addr */
         offset = ROUND_DOWN(fault_addr, PAGE_SIZE) - vmr->start + vmr->offset;
         vmr_prop_t perm = vmr->perm;
+        /* For CoW, map initial PTE as read-only to trigger later perm fault. */
+        if (perm & VMR_COW)
+                perm &= ~VMR_WRITE;
         switch (pmo->type) {
         case PMO_ANONYM:
         case PMO_SHM: {
@@ -207,8 +210,20 @@ int handle_trans_fault(struct vmspace *vmspace, vaddr_t fault_addr)
                          * page.
                          */
                         /* LAB 2 TODO 7 BEGIN */
-                        /* BLANK BEGIN */
-                        /* Hint: Allocate a physical page and clear it to 0. */
+                        
+
+                        void *new_page;
+                        long rss = 0;
+
+                        new_page = get_pages(0);
+                        if (!new_page) {
+                                ret = -ENOMEM;
+                                unlock(&vmspace->vmspace_lock);
+                                return ret;
+                        }
+
+                        memset(new_page, 0, PAGE_SIZE);
+                        pa = virt_to_phys(new_page);
 
                         /* BLANK END */
                         /*
@@ -220,7 +235,13 @@ int handle_trans_fault(struct vmspace *vmspace, vaddr_t fault_addr)
 
                         /* Add mapping in the page table */
                         lock(&vmspace->pgtbl_lock);
-                        /* BLANK BEGIN */
+                        
+
+                        ret = map_range_in_pgtbl(vmspace->pgtbl, fault_addr, pa,
+                                                 PAGE_SIZE, perm, &rss);
+                        if (ret == -EEXIST)
+                                ret = 0;
+                        vmspace->rss += rss;
 
                         /* BLANK END */
                         unlock(&vmspace->pgtbl_lock);
@@ -248,8 +269,15 @@ int handle_trans_fault(struct vmspace *vmspace, vaddr_t fault_addr)
                          */
                         if (pmo->type == PMO_SHM || pmo->type == PMO_ANONYM) {
                                 /* Add mapping in the page table */
+                                long rss = 0;
                                 lock(&vmspace->pgtbl_lock);
-                                /* BLANK BEGIN */
+                                
+
+                                ret = map_range_in_pgtbl(vmspace->pgtbl, fault_addr, pa,
+                                                         PAGE_SIZE, perm, &rss);
+                                if (ret == -EEXIST)
+                                        ret = 0;
+                                vmspace->rss += rss;
 
                                 /* BLANK END */
                                 /* LAB 2 TODO 7 END */
@@ -294,7 +322,6 @@ int handle_trans_fault(struct vmspace *vmspace, vaddr_t fault_addr)
                 break;
         }
         }
-
         unlock(&vmspace->vmspace_lock);
         return ret;
 }

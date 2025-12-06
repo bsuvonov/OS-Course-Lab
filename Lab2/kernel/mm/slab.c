@@ -138,7 +138,13 @@ static void choose_new_current_slab(struct slab_pointer * __maybe_unused pool)
 {
         /* LAB 2 TODO 2 BEGIN */
         /* Hint: Choose a partial slab to be a new current slab. */
-        /* BLANK BEGIN */
+        
+        if (list_empty(&pool->partial_slab_list)) {
+                pool->current_slab = NULL;
+                return;
+        }
+        pool->current_slab = container_of(pool->partial_slab_list.next, struct slab_header, node);
+        list_del(&pool->current_slab->node);
 
         /* BLANK END */
         /* LAB 2 TODO 2 END */
@@ -169,7 +175,22 @@ static void *alloc_in_slab_impl(int order)
          * Hint: Find a free slot from the free list of current slab.
          * If current slab is full, choose a new slab as the current one.
          */
-        /* BLANK BEGIN */
+        
+        if (current_slab->current_free_cnt == 0) {
+                choose_new_current_slab(&slab_pool[order]);
+                current_slab = slab_pool[order].current_slab;
+                if (!current_slab) {
+                        slab_pool[order].current_slab = init_slab_cache(order, SIZE_OF_ONE_SLAB);
+                        current_slab = slab_pool[order].current_slab;                        
+                        if (!current_slab) {
+                                unlock(&slabs_locks[order]);
+                                return NULL;
+                        }
+                }
+        }
+        free_list = current_slab->free_list_head;
+        current_slab->free_list_head = free_list->next_free;
+        current_slab->current_free_cnt--;
 
         /* BLANK END */
         /* LAB 2 TODO 2 END */
@@ -296,9 +317,12 @@ void free_in_slab(void *addr)
         /*
          * Hint: Free an allocated slot and put it back to the free list.
          */
-        /* BLANK BEGIN */
+        
+        slot->next_free = slab->free_list_head;
+        slab->free_list_head = slot;
+        
+        slab->current_free_cnt++;
 
-        UNUSED(slot);
         /* BLANK END */
         /* LAB 2 TODO 2 END */
 

@@ -299,11 +299,46 @@ int query_in_pgtbl(void *pgtbl, vaddr_t va, paddr_t *pa, pte_t **entry)
          * return the pa and pte until a L2/L3 block or page, return
          * `-ENOMAPPING` if the va is not mapped.
          */
-        /* BLANK BEGIN */
+        
+        ptp_t *cur = (ptp_t *)pgtbl, *next;
+        pte_t *pte;
+        int ret;
+        unsigned long offset;
 
-        /* BLANK END */
+        for (int level = L0; level <= L3; level++) {
+                ret = get_next_ptp(cur, level, va, &next, &pte, false, NULL);
+                if (ret < 0)
+                        return ret;
+
+                if (ret == BLOCK_PTP || level == L3) {
+                        if (pa) {
+                                switch (level) {
+                                case L0:
+                                        offset = va & ((1UL << L0_INDEX_SHIFT) - 1);
+                                        break;
+                                case L1:
+                                        offset = GET_VA_OFFSET_L1(va);
+                                        break;
+                                case L2:
+                                        offset = GET_VA_OFFSET_L2(va);
+                                        break;
+                                default:
+                                        offset = GET_VA_OFFSET_L3(va);
+                                        break;
+                                }
+                                *pa = virt_to_phys((vaddr_t)next) + offset;
+                        }
+                        if (entry)
+                                *entry = pte;
+                        return 0;
+                }
+
+                cur = next;
+        }
+
+        return -ENOMAPPING;
+        
         /* LAB 2 TODO 4 END */
-        return 0;
 }
 
 static int map_range_in_pgtbl_common(void *pgtbl, vaddr_t va, paddr_t pa,
@@ -319,9 +354,48 @@ static int map_range_in_pgtbl_common(void *pgtbl, vaddr_t va, paddr_t pa,
          * Since we are adding new mappings, there is no need to flush TLBs.
          * Return 0 on success.
          */
-        /* BLANK BEGIN */
+        
+        vaddr_t cur_va = va;
+        paddr_t cur_pa = pa;
 
-        /* BLANK END */
+        while (cur_va < va + len) {
+                ptp_t *l1, *l2, *l3;
+                pte_t *pte;
+                int ret;
+
+                ret = get_next_ptp((ptp_t *)pgtbl, L0, cur_va, &l1, &pte, true, rss);
+                if (ret < 0)
+                        return ret;
+                if (ret == BLOCK_PTP)
+                        return -EEXIST;
+
+                ret = get_next_ptp(l1, L1, cur_va, &l2, &pte, true, rss);
+                if (ret < 0)
+                        return ret;
+                if (ret == BLOCK_PTP)
+                        return -EEXIST;
+
+                ret = get_next_ptp(l2, L2, cur_va, &l3, &pte, true, rss);
+                if (ret < 0)
+                        return ret;
+                if (ret == BLOCK_PTP)
+                        return -EEXIST;
+
+                pte = &l3->ent[GET_L3_INDEX(cur_va)];
+                if (!IS_PTE_INVALID(pte->pte))
+                        return -EEXIST;
+
+                pte->pte = 0;
+                pte->l3_page.is_valid = 1;
+                pte->l3_page.is_page = 1;
+                pte->l3_page.pfn = cur_pa >> PAGE_SHIFT;
+                set_pte_flags(pte, flags, kind);
+
+                cur_va += PAGE_SIZE;
+                cur_pa += PAGE_SIZE;
+        }
+
+        
         /* LAB 2 TODO 4 END */
         dsb(ishst);
         isb();
@@ -397,9 +471,42 @@ int unmap_range_in_pgtbl(void *pgtbl, vaddr_t va, size_t len,
          * this function is called.
          * Return 0 on success.
          */
-        /* BLANK BEGIN */
+        
+        vaddr_t cur_va = va;
+        vaddr_t end_va = va + len;
 
-        /* BLANK END */
+        while (cur_va < end_va) {
+                ptp_t *l1, *l2, *l3;
+                pte_t *pte;
+                int ret;
+
+                ret = get_next_ptp((ptp_t *)pgtbl, L0, cur_va, &l1, &pte, false, rss);
+                if (ret < 0)
+                        return ret;
+                if (ret == BLOCK_PTP)
+                        return -EINVAL;
+
+                ret = get_next_ptp(l1, L1, cur_va, &l2, &pte, false, rss);
+                if (ret < 0)
+                        return ret;
+                if (ret == BLOCK_PTP)
+                        return -EINVAL;
+
+                ret = get_next_ptp(l2, L2, cur_va, &l3, &pte, false, rss);
+                if (ret < 0)
+                        return ret;
+                if (ret == BLOCK_PTP)
+                        return -EINVAL;
+
+                pte = &l3->ent[GET_L3_INDEX(cur_va)];
+                pte->pte = PTE_DESCRIPTOR_INVALID;
+
+                recycle_pgtable_entry((ptp_t *)pgtbl, l1, l2, l3, cur_va, rss);
+
+                cur_va += PAGE_SIZE;
+        }
+
+        
         /* LAB 2 TODO 4 END */
 
         dsb(ishst);
@@ -417,9 +524,43 @@ int mprotect_in_pgtbl(void *pgtbl, vaddr_t va, size_t len, vmr_prop_t flags)
          * The `kind` argument of `set_pte_flags` should always be `USER_PTE`.
          * Return 0 on success.
          */
-        /* BLANK BEGIN */
+        
+        vaddr_t cur_va = va;
+        vaddr_t end_va = va + len;
 
-        /* BLANK END */
+        while (cur_va < end_va) {
+                ptp_t *l1, *l2, *l3;
+                pte_t *pte;
+                int ret;
+
+                ret = get_next_ptp((ptp_t *)pgtbl, L0, cur_va, &l1, &pte, false, NULL);
+                if (ret < 0)
+                        return ret;
+                if (ret == BLOCK_PTP)
+                        return -EINVAL;
+
+                ret = get_next_ptp(l1, L1, cur_va, &l2, &pte, false, NULL);
+                if (ret < 0)
+                        return ret;
+                if (ret == BLOCK_PTP)
+                        return -EINVAL;
+
+                ret = get_next_ptp(l2, L2, cur_va, &l3, &pte, false, NULL);
+                if (ret < 0)
+                        return ret;
+                if (ret == BLOCK_PTP)
+                        return -EINVAL;
+
+                pte = &l3->ent[GET_L3_INDEX(cur_va)];
+                if (IS_PTE_INVALID(pte->pte))
+                        return -ENOMAPPING;
+
+                set_pte_flags(pte, flags, USER_PTE);
+
+                cur_va += PAGE_SIZE;
+        }
+
+        
         /* LAB 2 TODO 4 END */
         return 0;
 }
